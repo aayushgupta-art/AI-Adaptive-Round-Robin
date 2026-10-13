@@ -295,6 +295,14 @@ with st.sidebar:
 
     st.caption("Results update automatically when controls or workload change.")
 
+# Unified scheduler selector — drives the whole-page view
+active_scheduler = st.radio(
+    "Active scheduler view",
+    ["AI-Adaptive Scheduler", "No-AI Baseline Scheduler"],
+    horizontal=True,
+    key="global_scheduler_selector"
+)
+
 if process_list:
     model = load_model()
     features = build_feature_frame(process_list)
@@ -305,12 +313,22 @@ if process_list:
     adaptive_metrics = run_round_robin(copy_processes(process_list), predicted_quantum, context_penalty)
     input_io_ratio = sum(1 for p in process_list if p.burst_time <= 5) / len(process_list)
 
-    st.subheader("Model recommendation")
+    # Metrics adapt to the selected scheduler mode
+    if active_scheduler == "No-AI Baseline Scheduler":
+        display_quantum = quantum
+        metrics_header = "No-AI Baseline Scheduler"
+        schedule_source = "Fixed baseline quantum"
+    else:
+        display_quantum = predicted_quantum
+        metrics_header = "AI-Adaptive Scheduler"
+        schedule_source = "AI-predicted quantum"
+
+    st.subheader("Model recommendation" if active_scheduler == "AI-Adaptive Scheduler" else "Baseline recommendation")
     col1, col2, col3 = st.columns(3)
-    col1.metric("Predicted quantum", predicted_quantum)
+    col1.metric("Active Time Quantum", display_quantum)
     col2.metric("Queue length", len(process_list))
     col3.metric("Avg CPU burst", round(sum(p.burst_time for p in process_list) / len(process_list), 2) if process_list else 0.0)
-    st.caption(f"Model inputs: {len(process_list)} processes · average burst "
+    st.caption(f"{schedule_source} · {len(process_list)} processes · average burst "
                f"{features.iloc[0]['average_cpu_burst']:.2f} · I/O-bound ratio {input_io_ratio:.0%}")
 
     st.markdown("---")
@@ -423,16 +441,33 @@ if process_list:
         st.bar_chart(workload_df[["Burst"]], color="#31c48d")
 
     with tab2:
-        results_df = format_results(adaptive_metrics["results"])
-        st.subheader(f"Adaptive schedule · AI quantum {predicted_quantum}")
-        timeline = adaptive_metrics["timeline"]
+        # Derive active mode from the global unified selector (not a separate tab-level radio)
+        if active_scheduler == "AI-Adaptive Scheduler":
+            current_metrics = adaptive_metrics
+            current_quantum = predicted_quantum
+            schedule_label = "AI-Adaptive"
+            results_df = format_results(current_metrics["results"])
+            timeline = current_metrics["timeline"]
+            feature_data = current_metrics["feature_data"]
+            file_prefix = "adaptive_scheduler"
+        else:  # No-AI Baseline Scheduler
+            current_metrics = baseline_metrics
+            current_quantum = quantum
+            schedule_label = "No-AI Baseline"
+            results_df = format_results(current_metrics["results"])
+            timeline = current_metrics["timeline"]
+            feature_data = current_metrics["feature_data"]
+            file_prefix = "baseline_scheduler"
+
+        st.subheader(f"{schedule_label} schedule · Quantum {current_quantum}")
         if not timeline:
             st.info("No schedule events were generated for this workload.")
         else:
             st.caption(
-                f"The AI selected a quantum of {predicted_quantum} time units. "
+                f"The {'AI selected' if active_scheduler == 'AI-Adaptive Scheduler' else 'fixed'} quantum of {current_quantum} time units. "
                 "Each block's width shows how long that process used the CPU in this turn."
             )
+            # Use a unique key for the slider that includes the schedule type
             focus_index = st.slider(
                 "Step through execution",
                 min_value=0,
@@ -440,6 +475,7 @@ if process_list:
                 value=0,
                 format="Event %d",
                 help="Select an execution, context-switch, or idle interval to highlight it on the Gantt chart.",
+                key=f"focus_slider_{active_scheduler.lower().replace(' ', '_')}_tab2"
             )
             selected_event = timeline[focus_index]
             st.caption(
@@ -454,8 +490,8 @@ if process_list:
         st.subheader("Per-process metrics")
         st.dataframe(results_df, width="stretch", hide_index=True)
 
-        if adaptive_metrics["feature_data"]:
-            queue_df = pd.DataFrame(adaptive_metrics["feature_data"])
+        if feature_data:
+            queue_df = pd.DataFrame(feature_data)
             queue_df["step"] = np.arange(1, len(queue_df) + 1)
             st.subheader("Queue state during scheduling")
             st.line_chart(queue_df.set_index("step")[["ready_queue_length", "average_cpu_burst"]])
@@ -463,15 +499,15 @@ if process_list:
         st.download_button(
             "Download process results (CSV)",
             data=results_df.to_csv(index=False).encode("utf-8"),
-            file_name="adaptive_scheduler_results.csv",
+            file_name=f"{file_prefix}_results.csv",
             mime="text/csv",
         )
 
-        timeline_df = pd.DataFrame(adaptive_metrics["timeline"])
+        timeline_df = pd.DataFrame(timeline)
         st.download_button(
             "Download execution timeline (CSV)",
             data=timeline_df.to_csv(index=False).encode("utf-8"),
-            file_name="adaptive_scheduler_timeline.csv",
+            file_name=f"{file_prefix}_timeline.csv",
             mime="text/csv",
         )
 
