@@ -46,6 +46,7 @@ class RoundRobinSimulator:
                             "end": processes[next_process].arrival_time,
                             "label": "Idle",
                             "kind": "idle",
+                            "ready_queue": [],
                         })
                     self.current_time = processes[next_process].arrival_time
                     continue
@@ -71,7 +72,8 @@ class RoundRobinSimulator:
             self.feature_data.append({
     "ready_queue_length": ready_queue_length,
     "average_cpu_burst": average_cpu_burst,
-    "recent_workload_behavior": recent_workload_behavior
+    "recent_workload_behavior": recent_workload_behavior,
+    "ready_queue_pids": [p.pid for p in self.ready_queue],
 })
             # Take the first process from the ready queue
             current_process = self.ready_queue.popleft()
@@ -96,6 +98,7 @@ class RoundRobinSimulator:
                 "end": self.current_time,
                 "label": current_process.pid,
                 "kind": "execution",
+                "ready_queue": [p.pid for p in self.ready_queue],
             })
 
             # Add processes that arrived during execution
@@ -137,6 +140,7 @@ class RoundRobinSimulator:
                         "end": self.current_time,
                         "label": "CS",
                         "kind": "switch",
+                        "ready_queue": [p.pid for p in self.ready_queue],
                     })
                 if len(self.recent_processes) > 0:
                     io_count = sum(

@@ -470,19 +470,77 @@ if process_list:
             # Use a unique key for the slider that includes the schedule type
             focus_index = st.slider(
                 "Step through execution",
-                min_value=0,
-                max_value=len(timeline) - 1,
-                value=0,
+                min_value=1,
+                max_value=len(timeline),
+                value=1,
                 format="Event %d",
                 help="Select an execution, context-switch, or idle interval to highlight it on the Gantt chart.",
                 key=f"focus_slider_{active_scheduler.lower().replace(' ', '_')}_tab2"
             )
-            selected_event = timeline[focus_index]
+            selected_event = timeline[focus_index - 1]
             st.caption(
-                f"Event {focus_index + 1}/{len(timeline)} · {selected_event['label']} · "
+                f"Event {focus_index}/{len(timeline)} · {selected_event['label']} · "
                 f"time {selected_event['start']}–{selected_event['end']}"
             )
-            timeline_fig = draw_timeline(timeline, focus_index, light_mode)
+
+            # Ready Queue visualization for the selected event
+            ready_queue_pids = selected_event.get("ready_queue", [])
+            running_pid = selected_event["label"] if selected_event["kind"] == "execution" else None
+            card_bg = "#ffffff" if light_mode else "#111d2d"
+            card_border = "#cbd5e1" if light_mode else "#26364a"
+            running_bg = "#31c48d"
+            waiting_bg = "#1e293b" if light_mode else "#1a2540"
+            waiting_border = "#94a3b8" if light_mode else "#334155"
+            waiting_color = "#172033" if light_mode else "#e2e8f0"
+            no_q_color = "#64748b" if light_mode else "#94a3b8"
+
+            st.markdown(
+                f'<div style="background:{card_bg};border:1px solid {card_border};'
+                f'border-radius:12px;padding:14px 18px;margin:6px 0 14px 0;">'
+                f'<div style="font-size:13px;font-weight:700;color:{running_bg};letter-spacing:0.5px;'
+                f'text-transform:uppercase;margin-bottom:10px;">Ready Queue</div>',
+                unsafe_allow_html=True,
+            )
+            if running_pid:
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">'
+                    f'<span style="background:{running_bg};color:#07111f;padding:6px 16px;'
+                    f'border-radius:8px;font-weight:700;font-size:14px;">▶ {running_pid}</span>'
+                    f'<span style="font-size:12px;color:{no_q_color};font-style:italic;">currently executing</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">'
+                    f'<span style="background:#64748b;color:#fff;padding:6px 16px;'
+                    f'border-radius:8px;font-weight:700;font-size:14px;">⏸ Idle</span>'
+                    f'<span style="font-size:12px;color:{no_q_color};font-style:italic;">no process running</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            if ready_queue_pids:
+                chips = "".join(
+                    f'<span style="background:{waiting_bg};border:1px solid {waiting_border};'
+                    f'color:{waiting_color};padding:6px 14px;border-radius:8px;'
+                    f'font-weight:600;font-size:13px;">{pid}</span>'
+                    for pid in ready_queue_pids
+                )
+                st.markdown(
+                    f'<div style="display:flex;gap:8px;flex-wrap:wrap;">{chips}</div>'
+                    f'<div style="font-size:11px;color:{no_q_color};margin-top:8px;">'
+                    f'{len(ready_queue_pids)} process(es) waiting in queue</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f'<span style="font-size:13px;color:{no_q_color};font-style:italic;">'
+                    f'Ready queue is empty</span></div>',
+                    unsafe_allow_html=True,
+                )
+
+            timeline_fig = draw_timeline(timeline, focus_index - 1, light_mode)
             st.pyplot(timeline_fig, width="stretch")
             plt.close(timeline_fig)
             st.caption("Blocks run left-to-right in CPU order. Green = process execution · amber = context-switch overhead · slate = idle CPU")
@@ -512,6 +570,118 @@ if process_list:
         )
 
     with tab3:
+        # ===== 4-Step AI Pipeline Visualization =====
+        st.subheader("AI Prediction Pipeline: How the Model Selects the Optimal Quantum")
+
+        # Prepare live feature values for this workload
+        q_len = len(process_list)
+        avg_burst = sum(p.burst_time for p in process_list) / len(process_list) if process_list else 0.0
+        io_ratio = sum(1 for p in process_list if p.burst_time <= 5) / len(process_list) if process_list else 0.0
+
+        # Step cards container
+        step_bg = "#ffffff" if light_mode else "#111d2d"
+        step_border = "#cbd5e1" if light_mode else "#26364a"
+        step_accent = "#31c48d"
+        text_main = "#172033" if light_mode else "#e2e8f0"
+        text_muted = "#64748b" if light_mode else "#94a3b8"
+
+        st.markdown(
+            f'<div style="background:{step_bg};border:1px solid {step_border};'
+            f'border-radius:14px;padding:20px 24px;margin-bottom:24px;">',
+            unsafe_allow_html=True,
+        )
+
+        # Step 1: Feature Extraction
+        st.markdown(
+            f'<div style="display:flex;align-items:flex-start;gap:16px;margin-bottom:24px;">'
+            f'<div style="flex-shrink:0;width:44px;height:44px;border-radius:12px;background:{step_accent};'
+            f'display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;color:#07111f;">1</div>'
+            f'<div style="flex:1;">'
+            f'<div style="font-size:16px;font-weight:700;color:{text_main};margin-bottom:6px;">Step 1: Feature Extraction</div>'
+            f'<div style="font-size:13px;color:{text_muted};line-height:1.6;">'
+            f'The scheduler captures three key workload characteristics from the current process set:<br/>'
+            f'<span style="font-family:monospace;background:{step_bg};border:1px solid {step_border};padding:2px 6px;border-radius:4px;">ready_queue_length</span> = <b>{q_len}</b> &nbsp;|&nbsp; '
+            f'<span style="font-family:monospace;background:{step_bg};border:1px solid {step_border};padding:2px 6px;border-radius:4px;">average_cpu_burst</span> = <b>{avg_burst:.2f}</b> &nbsp;|&nbsp; '
+            f'<span style="font-family:monospace;background:{step_bg};border:1px solid {step_border};padding:2px 6px;border-radius:4px;">io_ratio</span> = <b>{io_ratio:.0%}</b>'
+            f'</div>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Step 2: Vectorization
+        st.markdown(
+            f'<div style="display:flex;align-items:flex-start;gap:16px;margin-bottom:24px;">'
+            f'<div style="flex-shrink:0;width:44px;height:44px;border-radius:12px;background:{step_accent};'
+            f'display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;color:#07111f;">2</div>'
+            f'<div style="flex:1;">'
+            f'<div style="font-size:16px;font-weight:700;color:{text_main};margin-bottom:6px;">Step 2: Vectorization</div>'
+            f'<div style="font-size:13px;color:{text_muted};line-height:1.6;">'
+            f'Features are arranged into a 1 x 3 feature vector matching the model\'s training schema:<br/>'
+            f'<div style="font-family:monospace;background:#0b1220;color:#67e8bd;padding:10px 14px;border-radius:8px;'
+            f'margin:8px 0;font-size:12px;overflow-x:auto;">'
+            f'X = [[{q_len}, {avg_burst:.4f}, {io_ratio:.4f}]]  &nbsp;<span style="color:#94a3b8;"># shape (1, 3)</span>'
+            f'</div>'
+            f'<div style="font-size:12px;color:{text_muted};">No scaling/normalization needed — Random Forest handles raw feature values directly.</div>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Step 3: Ensemble Tree Voting
+        st.markdown(
+            f'<div style="display:flex;align-items:flex-start;gap:16px;margin-bottom:24px;">'
+            f'<div style="flex-shrink:0;width:44px;height:44px;border-radius:12px;background:{step_accent};'
+            f'display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;color:#07111f;">3</div>'
+            f'<div style="flex:1;">'
+            f'<div style="font-size:16px;font-weight:700;color:{text_main};margin-bottom:6px;">Step 3: Ensemble Tree Voting</div>'
+            f'<div style="font-size:13px;color:{text_muted};line-height:1.6;">'
+            f'The trained Random Forest (typically 100-500 trees) independently evaluates the feature vector.<br/>'
+            f'Each tree traverses its decision path by comparing features against learned thresholds:<br/>'
+            f'<div style="font-family:monospace;background:#0b1220;color:#67e8bd;padding:10px 14px;border-radius:8px;'
+            f'margin:8px 0;font-size:12px;overflow-x:auto;">'
+            f'<span style="color:#94a3b8;"># e.g., Tree decision logic</span><br/>'
+            f'if ready_queue_length <= 5.5:<br/>'
+            f'&nbsp;&nbsp;if average_cpu_burst <= 8.2:<br/>'
+            f'&nbsp;&nbsp;&nbsp;&nbsp;predict 3<br/>'
+            f'&nbsp;&nbsp;else:<br/>'
+            f'&nbsp;&nbsp;&nbsp;&nbsp;predict 7<br/>'
+            f'else:<br/>'
+            f'&nbsp;&nbsp;predict 12'
+            f'</div>'
+            f'Final prediction = majority vote across all trees (class with highest vote count).'
+            f'</div>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Step 4: Optimal Quantum Output
+        pred_q = int(max(1, min(20, round(float(predicted_quantum)))))
+        st.markdown(
+            f'<div style="display:flex;align-items:flex-start;gap:16px;">'
+            f'<div style="flex-shrink:0;width:44px;height:44px;border-radius:12px;background:{step_accent};'
+            f'display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;color:#07111f;">4</div>'
+            f'<div style="flex:1;">'
+            f'<div style="font-size:16px;font-weight:700;color:{text_main};margin-bottom:6px;">Step 4: Optimal Quantum Output</div>'
+            f'<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">'
+            f'<div style="background:{step_accent};color:#07111f;padding:14px 28px;'
+            f'border-radius:10px;font-weight:800;font-size:28px;">Q = {pred_q}</div>'
+            f'<div style="font-size:14px;color:{text_muted};line-height:1.5;">'
+            f'This quantum is applied to a fresh Round Robin simulation of the same workload.<br/>'
+            f'Predicted by the trained Random Forest classifier on the extracted features above.'
+            f'</div>'
+            f'</div>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown('</div>', unsafe_allow_html=True)
+        # ===== End Pipeline Visualization =====
+
+        st.markdown("---")
+
         training_df = load_training_data()
         label_distribution = training_df["optimal_quantum"].value_counts().sort_index()
         dist_df = pd.DataFrame({"Quantum": label_distribution.index, "Records": label_distribution.values})
